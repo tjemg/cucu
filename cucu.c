@@ -22,12 +22,13 @@ static FILE *f;            /* input source file */
 static char tok[MAXTOKSZ]; /* current token */
 static int tokpos;         /* offset inside the current token */
 static int nextc;          /* next char to be pushed into token */
+static int linenum = 1;
 
 /* read next char */
 void readchr() {
 	if (tokpos == MAXTOKSZ - 1) {
 		tok[tokpos] = '\0';
-		error("Token too long: %s\n", tok);
+		error("[line %d] Token too long: %s\n", linenum, tok);
 	}
 	tok[tokpos++] = nextc;
 	nextc = fgetc(f);
@@ -38,6 +39,9 @@ void readtok() {
 	for (;;) {
 		/* skip spaces */
 		while (isspace(nextc)) {
+      if ('\n'==nextc) {
+        linenum++;
+      }
 			nextc = fgetc(f);
 		}
 		/* try to read a literal token */
@@ -102,7 +106,7 @@ int accept(char *s) {
 /* throw fatal error if the current token doesn't match the string */
 void expect(char *s) {
 	if (accept(s) == 0) {
-		error("Error: expected '%s', but found: %s\n", s, tok);
+		error("[line %d] Error: expected '%s', but found: %s\n", linenum, s, tok);
 	}
 }
 
@@ -136,7 +140,7 @@ static struct sym *sym_declare(char *name, char type, int addr) {
 	sym[sympos].type = type;
 	sympos++;
 	if (sympos > MAXSYMBOLS) {
-		error("Too many symbols\n");
+		error("[line %d] Too many symbols\n",linenum);
 	}
 	return &sym[sympos-1];
 }
@@ -187,7 +191,7 @@ static int prim_expr() {
 	} else if (isalpha(tok[0])) {
 		struct sym *s = sym_find(tok);
 		if (s == NULL) {
-			error("Undeclared symbol: %s\n", tok);
+			error("[line %d] Undeclared symbol: %s\n", linenum,tok);
 		}
 		if (s->type == 'L') {
 			gen_stack_addr(stack_pos - s->addr - 1);
@@ -219,7 +223,7 @@ static int prim_expr() {
 		gen_array(tok, i);
 		type = TYPE_NUM;
 	} else {
-		error("Unexpected primary expression: %s\n", tok);
+		error("[line %d] Unexpected primary expression: %s\n", linenum,tok);
 	}
 	readtok();
 	return type;
@@ -408,7 +412,7 @@ static void statement() {
 static void compile() {
 	while (tok[0] != 0) { /* until EOF */
 		if (typename() == 0) {
-			error("Error: type name expected\n");
+			error("[line %d] Error: type name expected\n",linenum);
 		}
 		struct sym *var = sym_declare(tok, 'U', 0);
 		readtok();
