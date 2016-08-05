@@ -23,6 +23,7 @@ static char tok[MAXTOKSZ]; /* current token */
 static int tokpos;         /* offset inside the current token */
 static int nextc;          /* next char to be pushed into token */
 static int linenum = 1;
+static int _debug = 0;
 
 /* read next char */
 void readchr() {
@@ -51,8 +52,7 @@ void readtok() {
 		}
 		/* if it's not a literal token */
 		if (tokpos == 0) {
-			while (nextc == '<' || nextc == '=' || nextc == '>'
-					|| nextc == '!' || nextc == '&' || nextc == '|') {
+			while (nextc == '<' || nextc == '=' || nextc == '>' || nextc == '!' || nextc == '&' || nextc == '|') {
 				readchr();
 			}
 		}
@@ -66,9 +66,9 @@ void readtok() {
 					readchr();
 				}
 				readchr();
-			} else if (nextc == '/') { /* skip comments */
+			} else if (nextc == '/') { // skip comments
 				readchr();
-				if (nextc == '*') {
+				if (nextc == '*') {      // support comments of the form '/**/'
 					nextc = fgetc(f);
 					while (nextc != '/') {
 						while (nextc != '*') {
@@ -78,7 +78,13 @@ void readtok() {
 					}
 					nextc = fgetc(f);
 					continue;
-				}
+				} else if (nextc == '/') { // support comments of the form '//'
+					while (nextc != '\n') {
+            nextc = fgetc(f);
+          }
+					nextc = fgetc(f);
+					continue;
+        }
 			} else if (nextc != EOF) {
 				/* otherwise it looks like a single-char symbol, like '+', '-' etc */
 				readchr();
@@ -87,6 +93,9 @@ void readtok() {
 		break;
 	}
 	tok[tokpos] = '\0';
+  if (_debug)  {
+    printf("TOKEN: %s\n",tok);
+  }
 }
 
 /* check if the current token machtes the string */
@@ -104,9 +113,13 @@ int accept(char *s) {
 }
 
 /* throw fatal error if the current token doesn't match the string */
-void expect(char *s) {
+void expect(int srclinenum, char *s) {
 	if (accept(s) == 0) {
-		error("[line %d] Error: expected '%s', but found: %s\n", linenum, s, tok);
+    if (_debug) {
+      error("[line %d ; srcline %d] Error: expected '%s', but found: %s\n", linenum, srclinenum, s, tok);
+    } else {
+      error("[line %d] Error: expected '%s', but found: %s\n", linenum, s, tok);
+    }
 	}
 }
 
@@ -116,7 +129,7 @@ void expect(char *s) {
 #define MAXSYMBOLS 4096
 static struct sym {
 	char type;
-	int addr;
+	int  addr;
 	char name[MAXTOKSZ];
 } sym[MAXSYMBOLS];
 static int sympos = 0;
@@ -163,9 +176,9 @@ static void emit(void *buf, size_t len) {
 
 #ifndef GEN
 #error "A code generator (backend) must be provided (use -DGEN=...)"
-#endif
-
+#else
 #include GEN
+#endif
 
 /*
  * PARSER AND COMPILER
@@ -173,13 +186,19 @@ static void emit(void *buf, size_t len) {
 
 static int expr();
 
-/* read type name: int, char and pointers are supported */
+// read type name:
+//   int, char and pointers (int* char*) are supported
+//   void is skipped (as if nothing was there)
+//   NOTE: void * is not supported
 static int typename() {
-	if (peek("int") || peek("char")) {
+	if (peek("int") || peek("char") ) {
 		readtok();
 		while (accept("*"));
 		return 1;
 	}
+	if (peek("void") ) {  // skip 'void' token
+		readtok();
+  }
 	return 0;
 }
 
@@ -201,7 +220,7 @@ static int prim_expr() {
 		type = TYPE_INTVAR;
 	} else if (accept("(")) {
 		type = expr();
-		expect(")");
+		expect(__LINE__,")");
 	} else if (tok[0] == '"') {
 		int i, j;
 		i = 0; j = 1;
@@ -247,7 +266,7 @@ static int postfix_expr() {
 	int type = prim_expr();
 	if (type == TYPE_INTVAR && accept("[")) {
 		binary(type, expr, GEN_ADD, GEN_ADDSZ);
-		expect("]");
+		expect(__LINE__,"]");
 		type = TYPE_CHARVAR;
 	} else if (accept("(")) {
 		int prev_stack_pos = stack_pos;
@@ -260,7 +279,7 @@ static int postfix_expr() {
 				expr();
 				gen_push();
 			}
-			expect(")");
+			expect(__LINE__,")");
 		}
 		type = TYPE_NUM;
 		gen_stack_addr(stack_pos - call_addr - 1);
@@ -321,11 +340,14 @@ static int eq_expr() {
 
 static int bitwise_expr() {
 	int type = eq_expr();
-	while (peek("|") || peek("&")) {
-		if (accept("|")) {
+
+	while (peek("|") || peek("&") || peek("^") ) {
+		if (accept("|")) {        // expression '|'
 			type = binary(type, eq_expr, GEN_OR, GEN_ORSZ);
-		} else if (accept("&")) {
+		} else if (accept("&")) { // expression '&'
 			type = binary(type, eq_expr, GEN_AND, GEN_ANDSZ);
+		} else if (accept("^")) { // expression '^'
+			type = binary(type, eq_expr, GEN_XOR, GEN_XORSZ);
 		}
 	}
 	return type;
@@ -351,62 +373,62 @@ static int expr() {
 }
 
 static void statement() {
-	if (accept("{")) {
-		int prev_stack_pos = stack_pos;
-		while (accept("}") == 0) {
-			statement();
-		}
-		gen_pop(stack_pos-prev_stack_pos);
-		stack_pos = prev_stack_pos;
-	} else if (typename()) {
-		struct sym *var = sym_declare(tok, 'L', stack_pos);
-		readtok();
-		if (accept("=")) {
-			expr();
-		}
-		gen_push(); /* make room for new local variable */
-		var->addr = stack_pos-1;
-		expect(";");
-	} else if (accept("if")) {
-		expect("(");
-		expr();
-		emit(GEN_JZ, GEN_JZSZ);
-		int p1 = codepos;
-		expect(")");
-		int prev_stack_pos = stack_pos;
-		statement();
-		emit(GEN_JMP, GEN_JMPSZ);
-		int p2 = codepos;
-		gen_patch(code + p1, codepos);
-		if (accept("else")) {
-			stack_pos = prev_stack_pos;
-			statement();
-		}
-		stack_pos = prev_stack_pos;
-		gen_patch(code + p2, codepos);
-	} else if (accept("while")) {
-		expect("(");
-		int p1 = codepos;
-		gen_loop_start();
-		expr();
-		emit(GEN_JZ, GEN_JZSZ);
-		int p2 = codepos;
-		expect(")");
-		statement();
-		emit(GEN_JMP, GEN_JMPSZ);
-		gen_patch(code + codepos, p1);
-		gen_patch(code + p2, codepos);
-	} else if (accept("return")) {
-		if (peek(";") == 0) {
-			expr();
-		}
-		expect(";");
-		gen_pop(stack_pos); /* remove all locals from stack (except return address) */
-		gen_ret();
-	} else {
-		expr();
-		expect(";");
-	}
+  if (accept("{")) {
+    int prev_stack_pos = stack_pos;
+    while (accept("}") == 0) {
+      statement();
+    }
+    gen_pop(stack_pos-prev_stack_pos);
+    stack_pos = prev_stack_pos;
+  } else if (typename()) {
+    struct sym *var = sym_declare(tok, 'L', stack_pos);
+    readtok();
+    if (accept("=")) {
+      expr();
+    }
+    gen_push(); /* make room for new local variable */
+    var->addr = stack_pos-1;
+    expect(__LINE__,";");
+  } else if (accept("if")) {
+    expect(__LINE__,"(");
+    expr();
+    emit(GEN_JZ, GEN_JZSZ);
+    int p1 = codepos;
+    expect(__LINE__,")");
+    int prev_stack_pos = stack_pos;
+    statement();
+    emit(GEN_JMP, GEN_JMPSZ);
+    int p2 = codepos;
+    gen_patch(code + p1, codepos);
+    if (accept("else")) {
+      stack_pos = prev_stack_pos;
+      statement();
+    }
+    stack_pos = prev_stack_pos;
+    gen_patch(code + p2, codepos);
+  } else if (accept("while")) {
+    expect(__LINE__,"(");
+    int p1 = codepos;
+    gen_loop_start();
+    expr();
+    emit(GEN_JZ, GEN_JZSZ);
+    int p2 = codepos;
+    expect(__LINE__,")");
+    statement();
+    emit(GEN_JMP, GEN_JMPSZ);
+    gen_patch(code + codepos, p1);
+    gen_patch(code + p2, codepos);
+  } else if (accept("return")) {
+    if (peek(";") == 0) {
+      expr();
+    }
+    expect(__LINE__,";");
+    gen_pop(stack_pos); /* remove all locals from stack (except return address) */
+    gen_ret();
+  } else {
+    expr();
+    expect(__LINE__,";");
+  }
 }
 
 static void compile() {
@@ -421,7 +443,7 @@ static void compile() {
 			gen_sym(var);
 			continue;
 		}
-		expect("(");
+		expect(__LINE__,"(");
 		int argc = 0;
 		for (;;) {
 			argc++;
@@ -433,9 +455,9 @@ static void compile() {
 			if (peek(")")) {
 				break;
 			}
-			expect(",");
+			expect(__LINE__,",");
 		}
-		expect(")");
+		expect(__LINE__,")");
 		if (accept(";") == 0) {
 			stack_pos = 0;
 			var->addr = codepos;
@@ -448,6 +470,12 @@ static void compile() {
 }
 
 int main(int argc, char *argv[]) {
+  if (argc>1) {
+    _debug = 1;
+  } else {
+    _debug = 0;
+  }
+  
 	f = stdin;
 	/* prefetch first char and first token */
 	nextc = fgetc(f);

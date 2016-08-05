@@ -27,6 +27,8 @@ static int mem_pos = 0;
 #define GEN_ORSZ strlen(GEN_OR)
 #define GEN_AND  "pop B  \nA:=B&A \n"
 #define GEN_ANDSZ strlen(GEN_AND)
+#define GEN_XOR "pop B  \nA:=B^A \n"
+#define GEN_XORSZ strlen(GEN_XOR)
 
 #define GEN_ASSIGN "pop B  \nM[B]:=A\n"
 #define GEN_ASSIGNSZ strlen(GEN_ASSIGN)
