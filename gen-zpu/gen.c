@@ -29,6 +29,12 @@ static int mem_pos = 0;
 #define GEN_ANDSZ strlen(GEN_AND)
 #define GEN_XOR "pop B  \nA:=B^A \n"
 #define GEN_XORSZ strlen(GEN_XOR)
+#define GEN_DIV "pop B  \nA:=B/A \n"
+#define GEN_DIVSZ strlen(GEN_DIV)
+#define GEN_MUL "pop B  \nA:=B*A \n"
+#define GEN_MULSZ strlen(GEN_MUL)
+#define GEN_MOD "pop B  \nA:=B%A \n"
+#define GEN_MODSZ strlen(GEN_MOD)
 
 #define GEN_ASSIGN "pop B  \nM[B]:=A\n"
 #define GEN_ASSIGNSZ strlen(GEN_ASSIGN)
@@ -126,5 +132,46 @@ static void gen_patch(uint8_t *op, int value) {
 	char s[32];
 	sprintf(s, "%04x", value);
 	memcpy(op-5, s, 4);
+}
+
+static void _load_immediate( int32_t v ) {
+  int      flag  = (v<0) ? 1 : 0;
+  uint32_t tmp   = v;
+  int      nOnes = 0;
+  int      nImm  = 0;
+  int      ii;
+  int      vals[5];
+
+  if (flag) {
+    for (ii=0; ii<32; ii++) {
+      if ( 0x80000000 == (tmp & 0x80000000) ) {
+        nOnes++;
+        tmp <<= 1;
+      } else {
+        break;
+      }
+    }
+    if ( (nOnes>=1 ) && (nOnes<=4)  ) nImm = 5;
+    if ( (nOnes>=5 ) && (nOnes<=11) ) nImm = 4;
+    if ( (nOnes>=12) && (nOnes<=18) ) nImm = 3;
+    if ( (nOnes>=19) && (nOnes<=25) ) nImm = 2;
+    if ( (nOnes>=26) && (nOnes<=32) ) nImm = 1;
+  } else {
+    while (1) {
+      if (0==tmp) break;
+      tmp >>= 7;
+      nImm++;
+    }
+    if (0==nImm) nImm++;
+  }
+  tmp = v;
+  for (ii=0; ii<nImm; ii++) {
+    vals[ii] = tmp & 0x7f;
+    tmp >>= 7;
+  }
+  
+  for (ii=0; ii<nImm; ii++) {
+    printf("0x%02x IM %d\n", 0x80 | vals[nImm-ii-1], vals[nImm-ii-1]);
+  }
 }
 

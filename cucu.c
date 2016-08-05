@@ -33,6 +33,7 @@ void readchr() {
 	}
 	tok[tokpos++] = nextc;
 	nextc = fgetc(f);
+  if ('\n'==nextc) {linenum++;}
 }
 
 /* read single token */
@@ -40,10 +41,8 @@ void readtok() {
 	for (;;) {
 		/* skip spaces */
 		while (isspace(nextc)) {
-      if ('\n'==nextc) {
-        linenum++;
-      }
 			nextc = fgetc(f);
+      if ('\n'==nextc) {linenum++;}
 		}
 		/* try to read a literal token */
 		tokpos = 0;
@@ -70,19 +69,25 @@ void readtok() {
 				readchr();
 				if (nextc == '*') {      // support comments of the form '/**/'
 					nextc = fgetc(f);
+          if ('\n'==nextc) {linenum++;}
 					while (nextc != '/') {
 						while (nextc != '*') {
 							nextc = fgetc(f);
+              if ('\n'==nextc) {linenum++;}
 						}
 						nextc = fgetc(f);
+            if ('\n'==nextc) {linenum++;}
 					}
 					nextc = fgetc(f);
+          if ('\n'==nextc) {linenum++;}
 					continue;
 				} else if (nextc == '/') { // support comments of the form '//'
 					while (nextc != '\n') {
             nextc = fgetc(f);
+            if ('\n'==nextc) {linenum++;}
           }
 					nextc = fgetc(f);
+          if ('\n'==nextc) {linenum++;}
 					continue;
         }
 			} else if (nextc != EOF) {
@@ -202,10 +207,32 @@ static int typename() {
 	return 0;
 }
 
+static int parse_immediate_value() {
+  if ( tok[0]=='0' ) {
+    if (tok[1]==0 ) return 0;
+    if (strlen(tok)<3) {
+			error("[line %d] Invalid symbol: %s\n", linenum, tok);
+    }
+    if ( (tok[1]=='x') || (tok[1]=='X') ) {
+      return strtol(tok+2, NULL, 16);
+    } else
+    if ( (tok[1]=='o') || (tok[1]=='o') ) {
+      return strtol(tok+2, NULL, 8);
+    } else
+    if ( (tok[1]=='b') || (tok[1]=='b') ) {
+      return strtol(tok+2, NULL, 2);
+    } else {
+			error("[line %d] Invalid symbol: %s\n", linenum, tok);
+    }
+  } else {
+    return strtol(tok, NULL, 10);
+  }
+}
+
 static int prim_expr() {
 	int type = TYPE_NUM;
 	if (isdigit(tok[0])) {
-		int n = strtol(tok, NULL, 10); /* TODO: parse 0x.. */
+    int n = parse_immediate_value();
 		gen_const(n);
 	} else if (isalpha(tok[0])) {
 		struct sym *s = sym_find(tok);
@@ -264,6 +291,7 @@ static int binary(int type, int (*f)(), char *buf, size_t len) {
 
 static int postfix_expr() {
 	int type = prim_expr();
+
 	if (type == TYPE_INTVAR && accept("[")) {
 		binary(type, expr, GEN_ADD, GEN_ADDSZ);
 		expect(__LINE__,"]");
@@ -341,13 +369,19 @@ static int eq_expr() {
 static int bitwise_expr() {
 	int type = eq_expr();
 
-	while (peek("|") || peek("&") || peek("^") ) {
+	while (peek("|") || peek("&") || peek("^") || peek("/") || peek("*") || peek("%") ) {
 		if (accept("|")) {        // expression '|'
 			type = binary(type, eq_expr, GEN_OR, GEN_ORSZ);
 		} else if (accept("&")) { // expression '&'
 			type = binary(type, eq_expr, GEN_AND, GEN_ANDSZ);
 		} else if (accept("^")) { // expression '^'
 			type = binary(type, eq_expr, GEN_XOR, GEN_XORSZ);
+		} else if (accept("/")) { // expression '/'
+			type = binary(type, eq_expr, GEN_DIV, GEN_DIVSZ);
+		} else if (accept("*")) { // expression '*'
+			type = binary(type, eq_expr, GEN_MUL, GEN_MULSZ);
+		} else if (accept("%")) { // expression '%'
+			type = binary(type, eq_expr, GEN_MOD, GEN_MODSZ);
 		}
 	}
 	return type;
@@ -363,7 +397,7 @@ static int expr() {
 			} else {
 				emit(GEN_ASSIGN8, GEN_ASSIGN8SZ);
 			}
-			stack_pos = stack_pos - 1; /* assume ASSIGN contains pop */
+			stack_pos = stack_pos - 1; // assume ASSIGN contains pop
 			type = TYPE_NUM;
 		} else {
 			gen_unref(type);
@@ -432,7 +466,7 @@ static void statement() {
 }
 
 static void compile() {
-	while (tok[0] != 0) { /* until EOF */
+	while (tok[0] != 0) { // until EOF
 		if (typename() == 0) {
 			error("[line %d] Error: type name expected\n",linenum);
 		}
@@ -463,8 +497,8 @@ static void compile() {
 			var->addr = codepos;
 			var->type = 'F';
 			gen_sym(var);
-			statement(); /* function body */
-			gen_ret(); /* another ret if user forgets to put 'return' */
+			statement(); // function body
+			gen_ret();   // FIXME: another ret if user forgets to put 'return'
 		}
 	}
 }
@@ -477,12 +511,16 @@ int main(int argc, char *argv[]) {
   }
   
 	f = stdin;
-	/* prefetch first char and first token */
+	// prefetch first char and first token
 	nextc = fgetc(f);
-	readtok();
+  if ('\n'==nextc) {linenum++;}
+  readtok();
 	gen_start();
 	compile();
 	gen_finish();
+  //_load_immediate(0xffaaba94); printf("\n");
+  //_load_immediate(0x000aba94); printf("\n");
+  //_load_immediate(0xcd0);      printf("\n");
 	return 0;
 }
 
