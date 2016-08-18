@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <string.h>
 
+#define MAXTOKSZ 256
+
 /* print fatal error message and exit */
 static void error(const char *fmt, ...) {
   va_list args;
@@ -14,10 +16,24 @@ static void error(const char *fmt, ...) {
   exit(1);
 }
 
-/*
- * LEXER
- */
-#define MAXTOKSZ 256
+//
+// SYMBOLS
+//
+#define MAXSYMBOLS 4096
+static struct sym {
+  char type;
+  int  addr;
+  char name[MAXTOKSZ];
+  int  nParams;
+} sym[MAXSYMBOLS];
+
+static int sympos = 0;
+int stack_pos = 0;
+
+
+//
+// LEXER
+//
 static FILE *f;            /* input source file */
 static char tok[MAXTOKSZ]; /* current token */
 static int tokpos;         /* offset inside the current token */
@@ -30,6 +46,7 @@ static int numPreambleVars = 0;
 static int numGlobalVars = 0;
 static int lastIsReturn = 0;
 static int flagScanGlobalVars = 1;
+static struct sym *currFunction = NULL;
 
 /* read next char */
 void readchr() {
@@ -134,22 +151,10 @@ void expect(int srclinenum, char *s) {
   }
 }
 
-/*
- * SYMBOLS
- */
-#define MAXSYMBOLS 4096
-static struct sym {
-  char type;
-  int  addr;
-  char name[MAXTOKSZ];
-} sym[MAXSYMBOLS];
-static int sympos = 0;
-
-int stack_pos = 0;
-
 static struct sym *sym_find(char *s) {
   int i;
   struct sym *symbol = NULL;
+  
   for (i = 0; i < sympos; i++) {
     if (strcmp(sym[i].name, s) == 0) {
       symbol = &sym[i];
@@ -202,7 +207,7 @@ static void emit(void *buf, size_t len) {
   codepos += len;
 }
 
-#define TYPE_NUM  0
+#define TYPE_NUM     0
 #define TYPE_CHARVAR 1
 #define TYPE_INTVAR  2
 
@@ -355,6 +360,11 @@ static int postfix_expr() {
     gen_stack_addr(stack_pos - call_addr - 1);
     gen_unref(TYPE_INTVAR);
     gen_call();
+    if (currFunction) {
+      gen_call_cleanup(currFunction->nParams);
+    } else {
+        error("[line %d] Error: unexpected function exit\n",linenum);
+    }
     /* remove function address and args */
     gen_pop(stack_pos - prev_stack_pos);
     stack_pos = prev_stack_pos;
@@ -433,6 +443,7 @@ static int expr() {
   int type = bitwise_expr();
   if (type != TYPE_NUM) {
     if (accept("=")) {
+      printf("HERE 1=\n");
       gen_push(); expr(); 
       if (type == TYPE_INTVAR) {
         emit(GEN_ASSIGN, GEN_ASSIGNSZ);
@@ -467,6 +478,7 @@ static void statement() {
     printf("GENERATE_VAR %s_%s\n",context,tok);
     readtok();
     if (accept("=")) {
+      printf("HERE 2=\n");
       expr();
     }
     numPreambleVars++;
@@ -574,11 +586,13 @@ static void compile() {
       stack_pos = 0;
       var->addr = codepos;
       var->type = 'F';
+      var->nParams = argc;
       gen_sym(var);
-      printf("FUNCTION: %s\n",var->name);
+      printf("FUNCTION: %s with %d params\n",var->name, argc);
       strcpy(context,var->name);
       genPreamble = 1;
       numPreambleVars = 0;
+      currFunction = var;
       statement(); // function body
       if (!lastIsReturn) {
         gen_ret(numPreambleVars);   // issue a ret if user forgets to put 'return'

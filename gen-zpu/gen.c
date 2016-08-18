@@ -49,17 +49,23 @@ static int mem_pos = 0;
 #define GEN_JZSZ strlen(GEN_JZ)
 
 
-  struct _imm_struct {
-    int nImm;
-    int v[5];
-  };
+struct _imm_struct {
+  int nImm;
+  int v[5];
+};
+
+int fixme_offset = 0;
+int addrCnt = 0;
 
 static struct _imm_struct _load_immediate( int32_t v );
 
 static void gen_start(int nGlobalVars) {
   char buf[100];
-  sprintf(buf,"GLOBALS %d\n",nGlobalVars);
-  emits("jmpCAFE\n");
+  sprintf(buf,"GLOBALS %d\n", nGlobalVars);
+  strcat(buf,"---\n");
+  fixme_offset = strlen(buf) + 1 + 3;
+  strcat(buf,"JMP xxxx\n");
+  strcat(buf,"---\n");
   emits(buf);
 }
 
@@ -70,7 +76,7 @@ static void gen_finish() {
     error("ERROR: could not find main function\n");
   }
   sprintf(s, "%04x", funcmain->addr);
-  memcpy(code+3, s, 4);
+  memcpy(code+fixme_offset, s, 4);
   printf("%s", code);
 }
 
@@ -90,6 +96,11 @@ static void gen_postamble(int nVars) {
   stack_pos = stack_pos + 1;
 }
 
+static void gen_call_cleanup(int nVars) {
+  char buf[100];
+  sprintf(buf,"DO CLEAN %d\n",nVars);
+  emits(buf);
+}
 
 static void gen_ret(int nVars) {
   gen_postamble(nVars);
