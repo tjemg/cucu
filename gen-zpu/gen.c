@@ -49,108 +49,122 @@ static int mem_pos = 0;
 #define GEN_JZSZ strlen(GEN_JZ)
 
 
-struct _imm_struct {
-  int nImm;
-  int v[5];
-};
+  struct _imm_struct {
+    int nImm;
+    int v[5];
+  };
 
 static struct _imm_struct _load_immediate( int32_t v );
 
-static void gen_start() {
+static void gen_start(int nGlobalVars) {
+  char buf[100];
+  sprintf(buf,"GLOBALS %d\n",nGlobalVars);
   emits("jmpCAFE\n");
+  emits(buf);
 }
 
 static void gen_finish() {
-	struct sym *funcmain = sym_find("_main");
-	char s[32];
+  struct sym *funcmain = sym_find("_main");
+  char s[32];
   if (NULL==funcmain) {
     error("ERROR: could not find main function\n");
   }
-	sprintf(s, "%04x", funcmain->addr);
-	memcpy(code+3, s, 4);
-	printf("%s", code);
-}
-
-static void gen_ret() {
-	emits("ret    \n");
-	stack_pos = stack_pos - 1;
-}
-
-static void gen_const(int n) {
-	char s[32];
-	sprintf(s, "A:=%04x\n", n);
-	emits(s);
-}
-
-static void gen_sym(struct sym *sym) {
-	if (sym->type == 'G') {
-		sym->addr = mem_pos;
-		mem_pos = mem_pos + TYPE_NUM_SIZE;
-	}
-}
-
-static void gen_loop_start() {}
-
-static void gen_sym_addr(struct sym *sym) {
-	gen_const(sym->addr);
-}
-
-static void gen_push() {
-	emits("push A \n");
-	stack_pos = stack_pos + 1;
+  sprintf(s, "%04x", funcmain->addr);
+  memcpy(code+3, s, 4);
+  printf("%s", code);
 }
 
 // generate function pre-amble
 // nVars: number of variables to save in the stack frame
 static void gen_preamble(int nVars) {
-	emits("PREAMB \n");
-	stack_pos = stack_pos + 1;
+  char buf[100];
+  sprintf(buf,"PREAMB %d\n",nVars);
+  emits(buf);
+  stack_pos = stack_pos + 1;
+}
+
+static void gen_postamble(int nVars) {
+  char buf[100];
+  sprintf(buf,"POSTAMB %d\n",nVars);
+  emits(buf);
+  stack_pos = stack_pos + 1;
+}
+
+
+static void gen_ret(int nVars) {
+  gen_postamble(nVars);
+  emits("ret    \n");
+  stack_pos = stack_pos - 1;
+}
+
+static void gen_const(int n) {
+  char s[32];
+  sprintf(s, "A:=%04x\n", n);
+  emits(s);
+}
+
+static void gen_sym(struct sym *sym) {
+  if (sym->type == 'G') {
+    sym->addr = mem_pos;
+    mem_pos = mem_pos + TYPE_NUM_SIZE;
+  }
+}
+
+static void gen_loop_start() {}
+
+static void gen_sym_addr(struct sym *sym) {
+  gen_const(sym->addr);
+}
+
+static void gen_push() {
+  emits("push A \n");
+  stack_pos = stack_pos + 1;
 }
 
 static void gen_pop(int n) {
-	char s[32];
-	if (n > 0) {
-		sprintf(s, "pop%04x\n", n);
-		emits(s);
-		stack_pos = stack_pos - n;
-	}
+  char s[32];
+  if (n > 0) {
+    sprintf(s, "pop%04x\n", n);
+    emits(s);
+    stack_pos = stack_pos - n;
+  }
 }
 
 static void gen_stack_addr(int addr) {
-	char s[32];
-	sprintf(s, "sp@%04x\n", addr);
-	emits(s);
+  char s[32];
+  sprintf(s, "sp@%04x\n", addr);
+  emits(s);
 }
 
 static void gen_unref(int type) {
-	if (type == TYPE_INTVAR) {
-		emits("A:=M[A]\n");
-	} else if (type == TYPE_CHARVAR) {
-		emits("A:=m[A]\n");
-	}
+  if (type == TYPE_INTVAR) {
+    emits("A:=M[A]\n");
+  } else if (type == TYPE_CHARVAR) {
+    emits("A:=m[A]\n");
+  }
 }
 
 static void gen_call() {
-	emits("call A \n");
+  emits("call A \n");
 }
 
 static void gen_array(char *array, int size) {
-	int i = size;
-	char *tok = array;
-	/* put token on stack */
-	for (; i >= 0; i-=2) {
-		gen_const((tok[i] << 8 | tok[i-1]));
-		gen_push();
-	}
-	/* put token address on stack */
-	gen_stack_addr(0);
+  int i = size;
+  char *tok = array;
+  /* put token on stack */
+  for (; i >= 0; i-=2) {
+    gen_const((tok[i] << 8 | tok[i-1]));
+    gen_push();
+  }
+  /* put token address on stack */
+  gen_stack_addr(0);
 }
 
 
 static void gen_patch(uint8_t *op, int value) {
-	char s[32];
-	sprintf(s, "%04x", value);
-	memcpy(op-5, s, 4);
+  char s[32];
+  sprintf(s, "%04x", value);
+  memcpy(op-5, s, 4);
 }
 
 static struct _imm_struct _load_immediate( int32_t v ) {
