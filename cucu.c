@@ -626,13 +626,11 @@ int main(int argc, char *argv[]) {
     printf("****************\n");
     printf("* Symbol Table *\n");
     printf("****************\n");
-    printf("\n");
+    printf("NAME\t\tADDR\t\tTYPE\n");
     for (ii=0; ii<sympos; ii++) {
-      printf("NAME: %s\n",sym[ii].name);
-      printf("ADDR: 0x%08x\n",sym[ii].addr);
-      printf("TYPE: %c\n",sym[ii].type);
-      printf("\n");
+      printf("%s\t\t0x%08x\t\t%c\n",sym[ii].name, sym[ii].addr, sym[ii].type);
     }
+    printf("\n");
   }
   printf("**********\n");
   printf("* Output *\n");
