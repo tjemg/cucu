@@ -24,6 +24,9 @@ static int tokpos;         /* offset inside the current token */
 static int nextc;          /* next char to be pushed into token */
 static int linenum = 1;
 static int _debug = 0;
+static char context[MAXTOKSZ];
+static int genPreamble = 0;
+static int numPreambleVars = 0;
 
 /* read next char */
 void readchr() {
@@ -152,8 +155,20 @@ static struct sym *sym_find(char *s) {
 	return symbol;
 }
 
-static struct sym *sym_declare(char *name, char type, int addr) {
-	strncpy(sym[sympos].name, name, MAXTOKSZ);
+// ctx:  context
+// name: symbol name
+// type: symbol type
+//       L - local symbol
+//       F - function
+//       G - global
+//       U - undefined
+// addr: symbol address
+static struct sym *sym_declare(char *ctx, char *name, char type, int addr) {
+  char sName[MAXTOKSZ];
+  strcpy(sName,ctx);
+  strcat(sName,"_");
+  strcat(sName,name);
+	strncpy(sym[sympos].name, sName, MAXTOKSZ);
 	sym[sympos].addr = addr;
 	sym[sympos].type = type;
 	sympos++;
@@ -235,13 +250,28 @@ static int prim_expr() {
     int n = parse_immediate_value();
 		gen_const(n);
 	} else if (isalpha(tok[0])) {
-		struct sym *s = sym_find(tok);
-		if (s == NULL) {
-			error("[line %d] Undeclared symbol: %s\n", linenum,tok);
-		}
+    char symName[MAXTOKSZ];
+		struct sym *s;
+
+    strcpy(symName,context);
+    strcat(symName,"_");
+    strcat(symName,tok);
+		s = sym_find(symName);  // find symbol in local context..
+    if (s==NULL) {
+      strcpy(symName,"_");
+      strcat(symName,tok);
+      s = sym_find(symName);  // find symbol in global context..
+      if (s == NULL) {
+        // symbol not found... this is an error...
+        error("[line %d] Undeclared symbol: %s\n", linenum,tok);
+      }
+    }
+    printf("SYM: %s\n",symName);
 		if (s->type == 'L') {
-			gen_stack_addr(stack_pos - s->addr - 1);
+      // Local Symbol
+      gen_stack_addr(stack_pos - s->addr - 1);
 		} else {
+      // Other Symbols (Global)
 			gen_sym_addr(s);
 		}
 		type = TYPE_INTVAR;
@@ -414,16 +444,32 @@ static void statement() {
     }
     gen_pop(stack_pos-prev_stack_pos);
     stack_pos = prev_stack_pos;
-  } else if (typename()) {
-    struct sym *var = sym_declare(tok, 'L', stack_pos);
+    strcpy(context,"");
+    genPreamble = 0;
+    numPreambleVars = 0;
+    return;
+  }
+  if (typename()) {
+    struct sym *var = sym_declare(context,tok, 'L', stack_pos);
+    printf("GENERATE_VAR %s_%s\n",context,tok);
     readtok();
     if (accept("=")) {
       expr();
     }
-    gen_push(); /* make room for new local variable */
+    numPreambleVars++;
+    // gen_push(); // make room for new local variable
     var->addr = stack_pos-1;
     expect(__LINE__,";");
-  } else if (accept("if")) {
+    return;
+  }
+  // if we arrive here, we can generate the preamble
+  if (genPreamble) {
+    genPreamble = 0;
+    printf("Generate Preamble (nvars = %d)\n",numPreambleVars);
+    gen_preamble(numPreambleVars);
+  }
+
+  if (accept("if")) {
     expect(__LINE__,"(");
     expr();
     emit(GEN_JZ, GEN_JZSZ);
@@ -440,7 +486,9 @@ static void statement() {
     }
     stack_pos = prev_stack_pos;
     gen_patch(code + p2, codepos);
-  } else if (accept("while")) {
+    return;
+  }
+  if (accept("while")) {
     expect(__LINE__,"(");
     int p1 = codepos;
     gen_loop_start();
@@ -452,17 +500,20 @@ static void statement() {
     emit(GEN_JMP, GEN_JMPSZ);
     gen_patch(code + codepos, p1);
     gen_patch(code + p2, codepos);
-  } else if (accept("return")) {
+    return;
+  }
+  if (accept("return")) {
     if (peek(";") == 0) {
       expr();
     }
     expect(__LINE__,";");
-    gen_pop(stack_pos); /* remove all locals from stack (except return address) */
+    gen_pop(stack_pos); // remove all locals from stack (except return address)
     gen_ret();
-  } else {
-    expr();
-    expect(__LINE__,";");
+    return;
   }
+  // we should process an expression...
+  expr();
+  expect(__LINE__,";");
 }
 
 static void compile() {
@@ -470,7 +521,7 @@ static void compile() {
 		if (typename() == 0) {
 			error("[line %d] Error: type name expected\n",linenum);
 		}
-		struct sym *var = sym_declare(tok, 'U', 0);
+		struct sym *var = sym_declare(context,tok, 'U', 0);
 		readtok();
 		if (accept(";")) {
 			var->type = 'G';
@@ -484,7 +535,7 @@ static void compile() {
 			if (typename() == 0) {
 				break;
 			}
-			sym_declare(tok, 'L', -argc-1);
+			sym_declare(context,tok, 'L', -argc-1);
 			readtok();
 			if (peek(")")) {
 				break;
@@ -493,10 +544,17 @@ static void compile() {
 		}
 		expect(__LINE__,")");
 		if (accept(";") == 0) {
+      if (strcmp(context,"")!=0 ) {
+        error("");
+      }
 			stack_pos = 0;
 			var->addr = codepos;
 			var->type = 'F';
 			gen_sym(var);
+      printf("FUNCTION: %s\n",var->name);
+      strcpy(context,var->name);
+      genPreamble = 1;
+      numPreambleVars = 0;
 			statement(); // function body
 			gen_ret();   // FIXME: another ret if user forgets to put 'return'
 		}
@@ -504,6 +562,9 @@ static void compile() {
 }
 
 int main(int argc, char *argv[]) {
+  int ii;
+
+  strcpy(context,"");
   if (argc>1) {
     _debug = 1;
   } else {
@@ -517,10 +578,28 @@ int main(int argc, char *argv[]) {
   readtok();
 	gen_start();
 	compile();
-	gen_finish();
   //_load_immediate(0xffaaba94); printf("\n");
   //_load_immediate(0x000aba94); printf("\n");
   //_load_immediate(0xcd0);      printf("\n");
+
+  if (_debug) {
+    printf("\n");
+    printf("****************\n");
+    printf("* Symbol Table *\n");
+    printf("****************\n");
+    printf("\n");
+    for (ii=0; ii<sympos; ii++) {
+      printf("NAME: %s\n",sym[ii].name);
+      printf("ADDR: 0x%08x\n",sym[ii].addr);
+      printf("TYPE: %c\n",sym[ii].type);
+      printf("\n");
+    }
+  }
+  printf("**********\n");
+  printf("* Output *\n");
+  printf("**********\n");
+  printf("\n");
+	gen_finish();
 	return 0;
 }
 

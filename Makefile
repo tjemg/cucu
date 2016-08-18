@@ -1,4 +1,4 @@
-CFLAGS := -Wall -W -std=c89
+CFLAGS := -Wall -W -std=c99 -g
 
 all: cucu-zpu
 

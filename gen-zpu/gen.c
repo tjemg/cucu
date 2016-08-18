@@ -1,4 +1,5 @@
 #define emits(s) emit(s, strlen(s))
+static void error(const char *fmt, ...);
 
 #define TYPE_NUM_SIZE 2
 static int mem_pos = 0;
@@ -47,13 +48,24 @@ static int mem_pos = 0;
 #define GEN_JZ "jmz....\n"
 #define GEN_JZSZ strlen(GEN_JZ)
 
+
+struct _imm_struct {
+  int nImm;
+  int v[5];
+};
+
+static struct _imm_struct _load_immediate( int32_t v );
+
 static void gen_start() {
-	emits("jmpCAFE\n");
+  emits("jmpCAFE\n");
 }
 
 static void gen_finish() {
-	struct sym *funcmain = sym_find("main");
+	struct sym *funcmain = sym_find("_main");
 	char s[32];
+  if (NULL==funcmain) {
+    error("ERROR: could not find main function\n");
+  }
 	sprintf(s, "%04x", funcmain->addr);
 	memcpy(code+3, s, 4);
 	printf("%s", code);
@@ -85,6 +97,13 @@ static void gen_sym_addr(struct sym *sym) {
 
 static void gen_push() {
 	emits("push A \n");
+	stack_pos = stack_pos + 1;
+}
+
+// generate function pre-amble
+// nVars: number of variables to save in the stack frame
+static void gen_preamble(int nVars) {
+	emits("PREAMB \n");
 	stack_pos = stack_pos + 1;
 }
 
@@ -134,13 +153,14 @@ static void gen_patch(uint8_t *op, int value) {
 	memcpy(op-5, s, 4);
 }
 
-static void _load_immediate( int32_t v ) {
+static struct _imm_struct _load_immediate( int32_t v ) {
   int      flag  = (v<0) ? 1 : 0;
   uint32_t tmp   = v;
   int      nOnes = 0;
   int      nImm  = 0;
   int      ii;
   int      vals[5];
+  struct _imm_struct _ret;
 
   if (flag) {
     for (ii=0; ii<32; ii++) {
@@ -169,9 +189,11 @@ static void _load_immediate( int32_t v ) {
     vals[ii] = tmp & 0x7f;
     tmp >>= 7;
   }
-  
+
+  _ret.nImm = nImm;
   for (ii=0; ii<nImm; ii++) {
-    printf("0x%02x IM %d\n", 0x80 | vals[nImm-ii-1], vals[nImm-ii-1]);
+    _ret.v[ii] = 0x80 | vals[nImm-ii-1];
+    //printf("0x%02x IM %d\n", 0x80 | vals[nImm-ii-1], vals[nImm-ii-1]);
   }
 }
 
